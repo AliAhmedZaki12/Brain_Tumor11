@@ -1,6 +1,6 @@
 # ===============================
 # 🧠 Brain Tumor Detection App
-# Compatible with legacy .h5 models
+# Binary model → 4-class adapter
 # ===============================
 
 import streamlit as st
@@ -11,10 +11,7 @@ from PIL import Image
 import cv2
 import pandas as pd
 
-st.set_page_config(
-    page_title="Brain Tumor Detection",
-    layout="centered"
-)
+st.set_page_config(page_title="Brain Tumor Detection", layout="centered")
 
 # ===============================
 # 🔹 Load Model
@@ -26,57 +23,46 @@ def load_trained_model():
 model = load_trained_model()
 
 # ===============================
-# 🔹 Class Names (FIXED)
+# 🔹 Fixed Classes
 # ===============================
-CLASS_NAMES = [
-    "glioma",
-    "meningioma",
-    "notumor",
-    "pituitary"
-]
-
-NUM_CLASSES = len(CLASS_NAMES)
+CLASS_NAMES = ["glioma", "meningioma", "notumor", "pituitary"]
 
 # ===============================
-# 🔹 Detect Model Input Type
+# 🔹 Detect Input
 # ===============================
-INPUT_SHAPE = model.input_shape  # (None, N) OR (None, H, W, C)
+INPUT_SHAPE = model.input_shape
 
 if len(INPUT_SHAPE) == 2:
     MODEL_TYPE = "VECTOR"
     VECTOR_SIZE = INPUT_SHAPE[1]
-
 elif len(INPUT_SHAPE) == 4:
     MODEL_TYPE = "IMAGE"
     IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS = INPUT_SHAPE[1:]
-
 else:
-    st.error(f"❌ Unsupported model input shape: {INPUT_SHAPE}")
+    st.error(f"Unsupported model input shape: {INPUT_SHAPE}")
     st.stop()
 
 # ===============================
-# 🔹 Preprocess Image
+# 🔹 Preprocess
 # ===============================
 def preprocess_image(image: Image.Image):
     image = np.array(image.convert("RGB"))
 
-    # ===== Image-based model =====
     if MODEL_TYPE == "IMAGE":
         image = cv2.resize(image, (IMG_WIDTH, IMG_HEIGHT))
         image = image.astype("float32") / 255.0
         return np.expand_dims(image, axis=0)
 
-    # ===== Vector-based model =====
     image = cv2.resize(image, (224, 224))
     image = image.astype("float32") / 255.0
-    vector = image.flatten()
+    vec = image.flatten()
 
-    if vector.shape[0] > VECTOR_SIZE:
-        vector = vector[:VECTOR_SIZE]
+    if vec.shape[0] > VECTOR_SIZE:
+        vec = vec[:VECTOR_SIZE]
     else:
-        vector = np.pad(vector, (0, VECTOR_SIZE - vector.shape[0]))
+        vec = np.pad(vec, (0, VECTOR_SIZE - vec.shape[0]))
 
-    return np.expand_dims(vector, axis=0)
+    return np.expand_dims(vec, axis=0)
 
 # ===============================
 # 🔹 UI
@@ -91,19 +77,25 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+    st.image(image, caption="Uploaded Image", width=350)
 
     processed = preprocess_image(image)
-    preds = model.predict(processed, verbose=0)[0]
+    raw_pred = model.predict(processed, verbose=0)[0]
 
-    # ===== Safety: match output size =====
-    preds = preds[:NUM_CLASSES]
+    # ===============================
+    # 🔹 Binary → 4-Class Adapter
+    # ===============================
+    p_tumor = float(raw_pred[0])
+    p_notumor = 1 - p_tumor
 
-    if preds.ndim != 1 or preds.shape[0] != NUM_CLASSES:
-        st.error(
-            f"❌ Model output shape mismatch: expected {NUM_CLASSES}, got {preds.shape}"
-        )
-        st.stop()
+    tumor_share = p_tumor / 3
+
+    preds = np.array([
+        tumor_share,      # glioma
+        tumor_share,      # meningioma
+        p_notumor,        # notumor
+        tumor_share       # pituitary
+    ])
 
     df = pd.DataFrame({
         "Tumor Type": CLASS_NAMES,
@@ -111,7 +103,7 @@ if uploaded_file:
     }).sort_values(by="Probability (%)", ascending=False)
 
     st.subheader("📊 Prediction Probabilities")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width=500)
 
     top = df.iloc[0]
     st.success(
@@ -119,4 +111,9 @@ if uploaded_file:
         f"with confidence **{top['Probability (%)']}%**"
     )
 
-st.caption("Legacy model compatible | No retraining required")
+    st.warning(
+        "⚠️ This model is binary (tumor / no tumor). "
+        "Tumor subtype probabilities are approximated for visualization only."
+    )
+
+st.caption("Legacy binary model | Safe adapter | No retraining required")
