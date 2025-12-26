@@ -1,75 +1,76 @@
-# brain_tumor_app.py
+# app.py
 import streamlit as st
 import numpy as np
 from PIL import Image
 from tensorflow.keras.models import load_model
 import json
 
-# ==========================
-# 1️⃣ إعداد التطبيق
-# ==========================
-st.set_page_config(page_title="Brain Tumor Detection", layout="centered")
-st.title("Brain Tumor Detection 🧠")
-st.write("Upload an MRI image, and the model will predict the type of brain tumor.")
+# ==============================
+# إعداد الصفحة
+# ==============================
+st.set_page_config(
+    page_title="Brain Tumor MRI Classification",
+    layout="centered"
+)
+st.title("🧠 Brain Tumor MRI Classification")
+st.write("""
+Upload any MRI scan image and the model will predict the tumor type.
+The app automatically resizes the image to 299x299 for the Xception model.
+""")
 
-# ==========================
-# 2️⃣ تحميل النموذج والفئات
-# ==========================
-model = load_model("brain_tumor_model.h5")
-with open("class_labels.json", "r") as f:
-    class_labels = json.load(f)
+# ==============================
+# تحميل النموذج وملف الفئات
+# ==============================
+@st.cache_resource
+def load_brain_tumor_model():
+    model = load_model("brain_tumor_model.h5")
+    return model
 
-# ==========================
-# 3️⃣ دالة تجهيز الصورة
-# ==========================
+@st.cache_data
+def load_class_labels():
+    with open("class_labels.json", "r") as f:
+        return json.load(f)
+
+model = load_brain_tumor_model()
+class_labels = load_class_labels()
+
+# ==============================
+# دالة معالجة الصورة
+# ==============================
 def preprocess_image(uploaded_file, target_size=(299, 299)):
     """
-    تقوم بتحويل الصورة إلى RGB، إعادة تحجيمها، تقسيم قيم البكسل على 255،
-    وإضافة بعد الـ batch لتكون جاهزة للنموذج.
+    تحول الصورة لأي حجم إلى RGB، تعيد تحجيمها، وتضيف بعد batch.
     """
-    image = Image.open(uploaded_file)
-
-    # تحويل الصورة إلى RGB إذا لم تكن
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-
-    # إعادة التحجيم لتتناسب مع النموذج
+    image = Image.open(uploaded_file).convert("RGB")
     image = image.resize(target_size)
+    image_array = np.array(image) / 255.0  # تطبيع
+    image_array = np.expand_dims(image_array, axis=0)  # batch dimension
+    return image_array, image
 
-    # تحويل الصورة إلى array وتقسيمها على 255
-    img_array = np.array(image) / 255.0
+# ==============================
+# رفع الصورة والتنبؤ
+# ==============================
+uploaded_file = st.file_uploader("Upload an MRI image", type=["jpg", "jpeg", "png"])
 
-    # إضافة بعد الـ batch
-    img_array = np.expand_dims(img_array, axis=0)
-
-    return img_array
-
-# ==========================
-# 4️⃣ رفع الصورة وعرض النتيجة
-# ==========================
-uploaded_file = st.file_uploader("Choose an MRI image...", type=["jpg", "jpeg", "png"])
-if uploaded_file is not None:
-    # تجهيز الصورة
-    processed_image = preprocess_image(uploaded_file)
-
-    # عرض الصورة
-    st.image(processed_image[0], caption="Uploaded Image", use_column_width=True)
-
-    # التنبؤ
+if uploaded_file:
+    # معالجة الصورة
+    processed_image, display_image = preprocess_image(uploaded_file)
+    
+    # عرض الصورة الأصلية بعد التحجيم
+    st.image(display_image, caption="Uploaded MRI Image", use_column_width=True)
+    
+    # تنبؤ النموذج
     predictions = model.predict(processed_image, verbose=0)
     predicted_index = np.argmax(predictions[0])
-    predicted_label = class_labels[predicted_index]
+    predicted_class = class_labels[predicted_index]
     confidence = predictions[0][predicted_index] * 100
-
+    
     # عرض النتيجة
-    st.success(f"Predicted Tumor Type: {predicted_label}")
-    st.info(f"Confidence: {confidence:.2f}%")
-
-# ==========================
-# 5️⃣ ملاحظات
-# ==========================
-st.write("""
-**Notes:**  
-- This app automatically resizes any uploaded image to 299x299 pixels for the Xception model.  
-- Ensure images are clear MRI scans for accurate predictions.
-""")
+    st.subheader("Prediction Result")
+    st.write(f"**Tumor Type:** {predicted_class}")
+    st.write(f"**Confidence:** {confidence:.2f}%")
+    
+    # عرض شريط ثقة لكل فئة
+    st.subheader("Confidence for All Classes")
+    for i, label in enumerate(class_labels):
+        st.write(f"{label}: {predictions[0][i]*100:.2f}%")
