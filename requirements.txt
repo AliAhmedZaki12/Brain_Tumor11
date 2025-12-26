@@ -1,7 +1,7 @@
 streamlit
-pandas
+tensorflow==2.15.0
 numpy
-scikit-learn
-imbalanced-learn
-joblib
+pillow
+opencv-python-headless
+
 
