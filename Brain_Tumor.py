@@ -28,11 +28,11 @@ st.write(
 )
 
 # =========================================================
-# تحميل النموذج والفئات (Caching)
+# تحميل النموذج والفئات
 # =========================================================
 @st.cache_resource
 def load_brain_tumor_model():
-    return load_model("brain_tumor_model.h5")
+    return load_model("brain_tumor_model.h5", compile=False)
 
 @st.cache_data
 def load_class_labels():
@@ -43,13 +43,23 @@ model = load_brain_tumor_model()
 class_labels = load_class_labels()
 
 # =========================================================
-# معالجة الصور (Any size → 299x299 بدون تشويه)
+# استخراج حجم الإدخال الحقيقي للنموذج
 # =========================================================
-def preprocess_image(uploaded_file, target_size=(299, 299)):
+input_shape = model.input_shape  # (None, H, W, C)
+IMG_HEIGHT = input_shape[1]
+IMG_WIDTH  = input_shape[2]
+IMG_CHANNELS = input_shape[3]
+
+st.caption(f"Model input shape: {input_shape}")
+
+# =========================================================
+# معالجة الصور (Any size → Model size بدون تشويه)
+# =========================================================
+def preprocess_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
 
     original_w, original_h = image.size
-    target_w, target_h = target_size
+    target_w, target_h = IMG_WIDTH, IMG_HEIGHT
 
     scale = min(target_w / original_w, target_h / original_h)
     new_w = int(original_w * scale)
@@ -57,7 +67,7 @@ def preprocess_image(uploaded_file, target_size=(299, 299)):
 
     resized_image = image.resize((new_w, new_h), Image.BILINEAR)
 
-    padded_image = Image.new("RGB", target_size, (0, 0, 0))
+    padded_image = Image.new("RGB", (target_w, target_h), (0, 0, 0))
     x_offset = (target_w - new_w) // 2
     y_offset = (target_h - new_h) // 2
     padded_image.paste(resized_image, (x_offset, y_offset))
@@ -89,7 +99,8 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
 
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    heatmap = tf.maximum(heatmap, 0)
+    heatmap /= tf.reduce_max(heatmap) + 1e-8
     return heatmap.numpy()
 
 def overlay_gradcam(image, heatmap, alpha=0.4):
@@ -118,7 +129,7 @@ if uploaded_file:
     # التنبؤ
     # =====================================================
     predictions = model.predict(processed_image, verbose=0)[0]
-    predicted_index = np.argmax(predictions)
+    predicted_index = int(np.argmax(predictions))
     predicted_class = class_labels[predicted_index]
     confidence = predictions[predicted_index] * 100
 
@@ -146,7 +157,7 @@ if uploaded_file:
     # =====================================================
     st.subheader("🔍 Model Attention (Grad-CAM)")
 
-    # Xception last conv layer
+    # ⚠️ عدّل الاسم لو نموذجك ليس Xception
     last_conv_layer_name = "block14_sepconv2_act"
 
     heatmap = make_gradcam_heatmap(
