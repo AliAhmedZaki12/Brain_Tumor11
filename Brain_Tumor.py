@@ -6,6 +6,9 @@ import tensorflow as tf
 import numpy as np
 import json
 from PIL import Image
+from tensorflow.keras.metrics import Precision, Recall
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Flatten, Dropout, Dense
 
 # ===============================
 # ⚙️ App Configuration
@@ -21,6 +24,7 @@ st.set_page_config(
 # ===============================
 @st.cache_resource
 def load_model():
+    # يجب أن يكون النموذج مبني على Xception مسبقًا
     return tf.keras.models.load_model("brain_tumor_model.h5")
 
 # ===============================
@@ -35,12 +39,18 @@ model = load_model()
 class_labels = load_class_labels()
 
 # ===============================
-# 🧪 Image Preprocessing (NO OpenCV)
+# 🧪 Image Preprocessing for Xception (299x299)
 # ===============================
-def preprocess_image(image: Image.Image, img_size=224):
-    image = image.resize((img_size, img_size))
-    image = np.array(image) / 255.0
+def preprocess_image(image: Image.Image, img_size=299):
+    # تحويل الصورة لـ RGB وتغيير حجمها
+    image = image.resize((img_size, img_size)).convert("RGB")
+    
+    # تحويل الصورة لمصفوفة numpy وتحويل dtype
+    image = np.array(image, dtype=np.float32) / 255.0
+    
+    # إضافة batch dimension
     image = np.expand_dims(image, axis=0)
+    
     return image
 
 # ===============================
@@ -61,6 +71,8 @@ if uploaded_file:
     if st.button("🔍 Predict"):
         with st.spinner("Analyzing image..."):
             processed_image = preprocess_image(image)
+            
+            # التنبؤ
             predictions = model.predict(processed_image, verbose=0)[0]
 
             predicted_index = int(np.argmax(predictions))
