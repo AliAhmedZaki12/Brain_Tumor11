@@ -1,18 +1,18 @@
-# Streamlit متوافق مع protobuf>=5
-streamlit==1.38.1
+# Streamlit متوافق مع Python 3.13
+streamlit==1.32.2
 
 # TensorFlow CPU متوافق مع Python 3.13
 tensorflow-cpu==2.20.0
 
-# مكتبات أساسية
+# مكتبات أساسية للمشروع
 numpy==1.26.4
 pillow==12.0.0
 opencv-python-headless==4.12.0.88
 
-# توافق Streamlit و TensorFlow مع protobuf
+# حل تعارض protobuf
 protobuf==5.28.0
 
-# متطلبات TensorFlow إضافية
+# مكتبات مساعدة لـ TensorFlow
 absl-py==2.3.1
 astunparse==1.6.3
 flatbuffers==25.12.19
@@ -20,3 +20,5 @@ gast==0.7.0
 google_pasta==0.2.0
 libclang==18.1.1
 opt_einsum==3.4.0
+
+
