@@ -1,23 +1,29 @@
 # ===============================
-# app.py
+# app.py  (PRODUCTION MEDICAL AI)
 # ===============================
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 from PIL import Image
 import tensorflow as tf
 import matplotlib.pyplot as plt
+import math
 
 # ===============================
-# Constants
+# CONFIG
 # ===============================
-MODEL_PATH = "brain_tumor_model_lite.tfliteA"
+MODEL_PATH = "brain_tumor_model_lite.tfliteA"  
 IMG_SIZE = (299, 299)
+
 CLASS_NAMES = ["Glioma", "Meningioma", "Pituitary", "No Tumor"]
-CONFIDENCE_THRESHOLD = 0.6  # أقل من هذا يتم تحويل الصورة تلقائيًا لـ "No Tumor"
+
+CONF_THRESHOLD = 0.65        # حد أدنى للثقة
+MARGIN_THRESHOLD = 0.15      # فرق الثقة بين أعلى فئتين
+ENTROPY_THRESHOLD = 1.2      # عدم اليقين (OOD detection)
 
 # ===============================
-# Load TFLite Model
+# LOAD MODEL
 # ===============================
 @st.cache_resource
 def load_tflite_model(path):
@@ -28,38 +34,64 @@ def load_tflite_model(path):
 interpreter = load_tflite_model(MODEL_PATH)
 
 # ===============================
-# Prediction Utilities
+# IMAGE PREPROCESS
 # ===============================
 def preprocess_image(image: Image.Image):
     image = image.convert("RGB")
     image = image.resize(IMG_SIZE)
-    img_array = np.array(image, dtype=np.float32) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
+    img = np.array(image, dtype=np.float32) / 255.0
+    img = np.expand_dims(img, axis=0)
+    return img
 
-def predict(image: Image.Image, threshold=CONFIDENCE_THRESHOLD):
-    """Predict probabilities for each class. Automatically assign No Tumor
-       if the model is not confident."""
-    img_array = preprocess_image(image)
+# ===============================
+# ENTROPY (UNCERTAINTY)
+# ===============================
+def entropy(probs):
+    return -np.sum([p * math.log(p + 1e-8) for p in probs])
+
+# ===============================
+# PREDICTION (MEDICAL-GRADE)
+# ===============================
+def predict(image: Image.Image):
+    img = preprocess_image(image)
+
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
-    interpreter.set_tensor(input_details[0]['index'], img_array)
+
+    interpreter.set_tensor(input_details[0]["index"], img)
     interpreter.invoke()
-    preds = interpreter.get_tensor(output_details[0]['index'])[0]
 
-    # ✅ أي صورة لا تتجاوز الاحتمال الأعلى threshold تُعامل كـ No Tumor
-    max_prob = np.max(preds)
-    if max_prob < threshold:
-        preds = np.zeros_like(preds)
-        preds[CLASS_NAMES.index("No Tumor")] = 1.0
+    probs = interpreter.get_tensor(output_details[0]["index"])[0]
 
-    return preds
+    # ---- Metrics ----
+    sorted_probs = np.sort(probs)[::-1]
+    max_prob = sorted_probs[0]
+    second_prob = sorted_probs[1]
+    margin = max_prob - second_prob
+    ent = entropy(probs)
+
+    # ---- Medical Decision Logic ----
+    is_uncertain = (
+        max_prob < CONF_THRESHOLD or
+        margin < MARGIN_THRESHOLD or
+        ent > ENTROPY_THRESHOLD
+    )
+
+    if is_uncertain:
+        final_probs = np.zeros_like(probs)
+        final_probs[CLASS_NAMES.index("No Tumor")] = 1.0
+        decision = "No Tumor (Low Confidence / OOD)"
+    else:
+        final_probs = probs
+        decision = CLASS_NAMES[np.argmax(probs)]
+
+    return final_probs, decision, max_prob, margin, ent
 
 # ===============================
-# Streamlit UI
+# STREAMLIT UI
 # ===============================
 st.set_page_config(page_title="Brain Tumor Detection", layout="centered")
-st.title("🧠 Brain Tumor Detection (TFLite Lite)")
+st.title(" Brain Tumor Detection ")
 
 uploaded_files = st.file_uploader(
     "Upload MRI Brain Images",
@@ -68,29 +100,37 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    for uploaded_file in uploaded_files:
-        image = Image.open(uploaded_file)
-        st.image(image, caption=f"Uploaded: {uploaded_file.name}", use_column_width=True)
-        
-        preds = predict(image)
-        top_idx = np.argmax(preds)
-        top_conf = preds[top_idx]
+    for file in uploaded_files:
+        image = Image.open(file)
+        st.image(image, caption=file.name, use_column_width=True)
 
-        st.success(f"Prediction: {CLASS_NAMES[top_idx]} ({top_conf*100:.2f}%)")
-        
-        # ✅ Table of probabilities
-        prob_df = pd.DataFrame({
+        probs, decision, max_prob, margin, ent = predict(image)
+        top_idx = np.argmax(probs)
+
+        # ---- Result ----
+        if "No Tumor" in decision:
+            st.warning(f"🟡 {decision}")
+        else:
+            st.success(f" Tumor Type: {decision} ({max_prob*100:.2f}%)")
+
+        # ---- Explainability ----
+        st.markdown("### 🔍 Confidence Analysis")
+        st.write(f"• Max Probability: **{max_prob:.2f}**")
+        st.write(f"• Confidence Margin: **{margin:.2f}**")
+        st.write(f"• Entropy (Uncertainty): **{ent:.2f}**")
+
+        # ---- Table ----
+        df = pd.DataFrame({
             "Class": CLASS_NAMES,
-            "Probability": preds
+            "Probability": probs
         }).sort_values(by="Probability", ascending=False)
-        st.table(prob_df)
-        
-        # ✅ Bar chart
-        fig, ax = plt.subplots(figsize=(6,4))
-        ax.barh(prob_df["Class"], prob_df["Probability"], color='skyblue')
+
+        st.table(df)
+
+        # ---- Plot ----
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.barh(df["Class"], df["Probability"])
         ax.set_xlim(0, 1)
-        for i, v in enumerate(prob_df["Probability"]):
-            ax.text(v + 0.01, i, f"{v*100:.1f}%", color='blue', fontweight='bold')
         ax.invert_yaxis()
         ax.set_xlabel("Probability")
         ax.set_title("Prediction Probabilities")
