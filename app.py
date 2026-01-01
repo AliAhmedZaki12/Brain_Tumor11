@@ -59,7 +59,7 @@ def predict(image: Image.Image, threshold=CONFIDENCE_THRESHOLD):
 # Streamlit UI
 # ===============================
 st.set_page_config(page_title="Brain Tumor Detection", layout="centered")
-st.title("🧠 Brain Tumor Detection (TFLite Lite)")
+st.title("🧠 Brain Tumor Detection")
 
 uploaded_files = st.file_uploader(
     "Upload MRI Brain Images",
