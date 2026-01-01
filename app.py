@@ -1,88 +1,105 @@
 import streamlit as st
-import numpy as np
-import pandas as pd
 from PIL import Image
+import numpy as np
 import tensorflow as tf
+import pandas as pd
 import matplotlib.pyplot as plt
 
 # ===============================
-# Constants
+# 🔹 Config
 # ===============================
-MODEL_PATH = "brain_tumor_model_lite.tfliteA"
+TFLITE_MODEL_PATH = "brain_tumor_model_lite.tfliteA"
 IMG_SIZE = (299, 299)
-CLASS_NAMES = ["Glioma", "Meningioma", "Pituitary", "No Tumor"]
-CONFIDENCE_THRESHOLD = 0.6  # أقل من هذا يتم رفض الصورة
+CLASS_LABELS = ["Glioma", "Meningioma", "Pituitary", "No Tumor"]  # عدّل حسب ترتيبك في التدريب
+
+st.set_page_config(page_title="Brain Tumor Detection", layout="wide")
 
 # ===============================
-# Load TFLite Model
+# 🔹 Load TFLite Model
 # ===============================
 @st.cache_resource
-def load_tflite_model(path):
-    interpreter = tf.lite.Interpreter(model_path=path)
+def load_tflite_model(model_url):
+    import requests, io
+    # تحميل النموذج من GitHub
+    response = requests.get(model_url)
+    tflite_model = response.content
+    interpreter = tf.lite.Interpreter(model_content=tflite_model)
     interpreter.allocate_tensors()
     return interpreter
 
-interpreter = load_tflite_model(MODEL_PATH)
+interpreter = load_tflite_model(TFLITE_MODEL_PATH)
+input_details  = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 # ===============================
-# Prediction Utilities
+# 🔹 Helper Functions
 # ===============================
 def preprocess_image(image: Image.Image):
-    image = image.convert("RGB")
-    image = image.resize(IMG_SIZE)
-    img_array = np.array(image, dtype=np.float32) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+    image = image.convert("RGB").resize(IMG_SIZE)
+    img_array = np.array(image)/255.0
+    img_array = np.expand_dims(img_array.astype(np.float32), axis=0)
     return img_array
 
-def predict(image: Image.Image):
-    img_array = preprocess_image(image)
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    interpreter.set_tensor(input_details[0]['index'], img_array)
+def predict_tflite(image_array: np.ndarray):
+    interpreter.set_tensor(input_details[0]['index'], image_array)
     interpreter.invoke()
-    output_data = interpreter.get_tensor(output_details[0]['index'])
-    return output_data[0]
+    output_data = interpreter.get_tensor(output_details[0]['index'])[0]
+    return output_data
+
+def is_brain_mri(image: Image.Image, gray_ratio_threshold=0.7):
+    """
+    Rejects images that are not brain MRIs based on low saturation (grayness)
+    """
+    image = image.convert("RGB").resize(IMG_SIZE)
+    img_np = np.array(image)/255.0
+    r, g, b = img_np[:,:,0], img_np[:,:,1], img_np[:,:,2]
+    max_rgb = np.maximum(np.maximum(r, g), b)
+    min_rgb = np.minimum(np.minimum(r, g), b)
+    saturation = max_rgb - min_rgb
+    gray_ratio = np.sum(saturation < 0.2) / (IMG_SIZE[0]*IMG_SIZE[1])
+    return gray_ratio >= gray_ratio_threshold
 
 # ===============================
-# Streamlit UI
+# 🔹 Streamlit App
 # ===============================
-st.set_page_config(page_title="Brain Tumor Detection", layout="centered")
-st.title("🧠 Brain Tumor Detection (TFLite Lite)")
+st.title("🧠 Brain Tumor Classification (TFLite)")
+st.write("Upload a brain MRI image. Non-brain images are automatically rejected.")
 
-uploaded_files = st.file_uploader(
-    "Upload MRI Brain Images",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True
-)
+uploaded_file = st.file_uploader("Upload MRI Image", type=["png", "jpg", "jpeg"])
 
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        image = Image.open(uploaded_file)
-        st.image(image, caption=f"Uploaded: {uploaded_file.name}", use_column_width=True)
-        
-        preds = predict(image)
-        top_idx = np.argmax(preds)
-        top_conf = preds[top_idx]
-        
-        if top_conf < CONFIDENCE_THRESHOLD:
-            st.error("❌ Image Rejected: does not match expected MRI brain patterns or is unclear.")
-        else:
-            st.success(f"Prediction: **{CLASS_NAMES[top_idx]}** ({top_conf*100:.2f}%)")
-            
-            # Table of probabilities
-            prob_df = pd.DataFrame({
-                "Class": CLASS_NAMES,
-                "Probability": preds
-            }).sort_values(by="Probability", ascending=False)
-            st.table(prob_df)
-            
-            # Bar chart
-            fig, ax = plt.subplots(figsize=(6,4))
-            ax.barh(prob_df["Class"], prob_df["Probability"], color='skyblue')
-            ax.set_xlim(0, 1)
-            for i, v in enumerate(prob_df["Probability"]):
-                ax.text(v + 0.01, i, f"{v*100:.1f}%", color='blue', fontweight='bold')
-            ax.invert_yaxis()
-            ax.set_xlabel("Probability")
-            ax.set_title("Prediction Probabilities")
-            st.pyplot(fig)
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    # ---- Reject non-brain images ----
+    if not is_brain_mri(image):
+        st.error("❌ Rejected: Not a valid brain MRI image.")
+    else:
+        st.success("✅ Image accepted, running prediction...")
+
+        # ---- Preprocess & Predict ----
+        img_array = preprocess_image(image)
+        probs = predict_tflite(img_array)
+        top_idx = np.argmax(probs)
+        top_label = CLASS_LABELS[top_idx]
+
+        # ---- Display Probabilities Table ----
+        df_probs = pd.DataFrame({
+            "Class": CLASS_LABELS,
+            "Probability": np.round(probs*100, 2)
+        }).sort_values("Probability", ascending=False)
+        st.subheader("Prediction Probabilities")
+        st.dataframe(df_probs)
+
+        # ---- Highlight Top Class ----
+        st.markdown(f"### 🔹 Predicted Tumor Type: **{top_label}** ({probs[top_idx]*100:.2f}%)")
+
+        # ---- Plot Bar Chart ----
+        st.subheader("Probability Distribution")
+        fig, ax = plt.subplots(figsize=(6,4))
+        ax.bar(df_probs['Class'], df_probs['Probability'], color='skyblue')
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("Probability (%)")
+        for i, v in enumerate(df_probs['Probability']):
+            ax.text(i, v+1, f"{v:.1f}%", ha='center', fontweight='bold')
+        st.pyplot(fig)
