@@ -14,7 +14,7 @@ import cv2
 # =====================================================
 # CONFIGURATION
 # =====================================================
-MODEL_PATH = "brain_tumor_model_lite.tflite"   # ✅ صحيح
+MODEL_PATH = "brain_tumor_model_lite.tfliteA"   # ✅ صحيح
 IMG_SIZE = (299, 299)
 
 CLASS_NAMES = ["Glioma", "Meningioma", "Pituitary", "No Tumor"]
